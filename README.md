@@ -35,7 +35,7 @@ Le script génère aussi les fichiers de **soumission Kaggle**.
 
 | Fichier/Dossier | Description |
 |-----------------|-------------|
-| `BE1_data_science_ECL_2025.py` | Script principal : chargement, représentations, moteurs, évaluations, graph, et soumissions. |
+| `BE2_data_science_ECL_2025.py` | Script principal : chargement, représentations, moteurs, évaluations, graph, et soumissions. |
 | `requirements.txt` | Dépendances Python pour exécuter le projet. |
 | `README.md` | Ce fichier. |
 | `sample_submission.csv` | Modèle de soumission Kaggle (fourni par l’enseignant / la compétition). |
