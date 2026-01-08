@@ -80,7 +80,7 @@ def print_err(msg: str):
 #  CONFIG — chemins fichiers
 # ============================================================
 
-BASE_PATH   = r"C:\Users\julie\OneDrive\Documents\Centrale Lyon 20252026\Data science\BE2"
+BASE_PATH   = r"C:\BE2_Data_science_ECL\data"
 CORPUS_PATH = os.path.join(BASE_PATH, "corpus.jsonl")
 QUERIES_PATH = os.path.join(BASE_PATH, "queries.jsonl")
 QRELS_PATH  = os.path.join(BASE_PATH, "valid.tsv")
@@ -1426,3 +1426,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
