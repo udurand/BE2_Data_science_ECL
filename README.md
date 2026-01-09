@@ -47,7 +47,7 @@ L’objectif est de produire un **score d’appariement S(q, c)** pour classer l
 
 ⚠️ **Fichiers non inclus** (à placer dans le dossier racine) :
 - Données d’entrée : `corpus.jsonl`, `queries.jsonl`, `valid.tsv`, `test_final.tsv`.
-- Cache : `corpus_embeddings.pkl` (généré automatiquement).
+- Cache : `corpus_embeddings.pkl` et `corpus_embeddings__all-mpnet-base-v2.pkl` (générés automatiquement).
 
 ---
 
@@ -100,9 +100,9 @@ python BE2_data_science_ECL_2025.py
 ```
 > ⏳ **Temps d’exécution** :
 > - La **première exécution** peut prendre **plusieurs minutes** (voire heures selon votre machine), surtout pour :
->   - Le calcul des embeddings SBERT (`corpus_embeddings.pkl`).
+>   - Le calcul des embeddings SBERT (`corpus_embeddings.pkl` et `corpus_embeddings__all-mpnet-base-v2.pkl`).
 >   - L’entraînement du modèle LDA (Section 6, optionnelle).
-> - Les exécutions suivantes seront plus rapides grâce au cache (`corpus_embeddings.pkl`).
+> - Les exécutions suivantes seront plus rapides grâce au cache (`corpus_embeddings.pkl` et `corpus_embeddings__all-mpnet-base-v2.pkl`).
 
 ### 4. Résultats attendus
 Le script :
@@ -139,35 +139,13 @@ Le script :
 - **Parallelisation** : Les calculs de similarité cosinus sont vectorisés avec `numpy`/`scipy`.
 
 ### Désactiver des sections :
-- Pour **ignorer la partie LDA** (longue et optionnelle), commentez l’appel à `run_lda_topic_modeling(corpus)` dans le `main()`.
-- Pour **éviter de recalculer les embeddings**, assurez-vous que `corpus_embeddings.pkl` existe déjà.
+- Pour **ignorer la partie LDA** , commentez l’appel à `run_lda_topic_modeling(corpus)` dans le `main()`.
+- Pour **éviter de recalculer les embeddings**, assurez-vous que `corpus_embeddings.pkl` et `corpus_embeddings__all-mpnet-base-v2.pkl` existent déjà.
 
 ---
 
-## FAQ
-
-### ❓ Pourquoi le script est-il lent ?
-- Le calcul des embeddings SBERT (`all-MiniLM-L6-v2` ou `all-mpnet-base-v2`) sur 25k+ articles est **coûteux en CPU/GPU**.
-- Solution : Utilisez un sous-ensemble du corpus pour les tests, ou exécutez le script sur une machine avec GPU (ex: Google Colab).
-
-### ❓ Comment adapter le script pour `test_final.tsv` ?
-1. Remplacez `QRELS_PATH` par le chemin vers `test_final.tsv`.
-2. Modifiez les noms de sortie des soumissions (ex: `submission_test_dense.csv`).
-
-### ❓ Erreur "Missing library faiss" ?
-Installez FAISS via :
-```bash
-pip install faiss-cpu  # ou faiss-gpu si vous avez un GPU NVIDIA
-```
-
-### ❓ Comment visualiser les résultats LDA ?
-Ouvrez le fichier `pyldavis_lda.html` généré dans votre navigateur (Section 6).
-
----
 
 ## Auteurs et licence
 - **Auteurs** : [Julien Durand](https://github.com/udurand), Laurène Cristol, Théo Florence.
-- **Licence** : Ce projet est ouvert à des fins pédagogiques. Merci de citer les auteurs en cas de réutilisation.
 
----
-**Besoin d’aide ?** Ouvrez une [issue](https://github.com/udurand/BE2_Data_science_ECL/issues) sur le dépôt GitHub !
+
