@@ -1,9 +1,17 @@
-# ============================================================
-#  MOD 7.2 — Recherche d'information dans la littérature
-#  Script propre (Spyder) — Version nettoyée / aérée
-#  + PRINTS STANDARDISÉS
-#  (algorithmes inchangés, uniquement structuration/commentaires/prints)
-# ============================================================
+# ============================================================================
+#  MOD 7.2 — Recherche d'information dans la littérature scientifique
+#  Centrale Lyon — Introduction à la science des données
+#
+#
+#  Objectif :
+#  Implémenter et comparer plusieurs moteurs de recherche d’articles scientifiques :
+#   - représentations creuses (TF / TF-IDF),
+#   - représentations denses (Sentence-Transformers),
+#   - représentations enrichies par la structure du graphe de citations.
+#
+#  Auteurs : Groupe Théo forever, Julien Durand, Laurène Cristol, Théo Florence
+#  Date    : Janvier 2026
+# ============================================================================
 
 import os
 import json
@@ -32,6 +40,24 @@ try:
 except ImportError as e:
     print(f"Missing library: {e}")
     print("Please install with: pip install sentence-transformers scikit-learn networkx")
+    raise
+
+import re
+
+# --- STEMMING (NLTK) ---
+try:
+    from nltk.stem.snowball import SnowballStemmer
+except ImportError as e:
+    print(f"Missing library: {e}")
+    print("Please install with: pip install nltk")
+    raise
+
+# --- FAISS ---
+try:
+    import faiss
+except ImportError as e:
+    print(f"Missing library: {e}")
+    print("Missing library faiss. Install with: pip install faiss-cpu")
     raise
 
 warnings.filterwarnings("ignore")
@@ -80,7 +106,7 @@ def print_err(msg: str):
 #  CONFIG — chemins fichiers
 # ============================================================
 
-BASE_PATH   = r"C:\BE2_Data_science_ECL\data"
+BASE_PATH   = r"C:\Users\julie\OneDrive\Documents\Centrale Lyon 20252026\Data science\BE2"
 CORPUS_PATH = os.path.join(BASE_PATH, "corpus.jsonl")
 QUERIES_PATH = os.path.join(BASE_PATH, "queries.jsonl")
 QRELS_PATH  = os.path.join(BASE_PATH, "valid.tsv")
@@ -191,7 +217,7 @@ def load_qrels(file_path):
 
 def compute_basic_stats(corpus, queries, qrels_valid):
     """
-    Calcule et affiche des stats simples demandées par le sujet :
+    Calcule et affiche des stats simples  :
     - tailles corpus / queries
     - nb paires query-document dans valid.tsv
     - proportion de pertinents / non-pertinents par requête
@@ -354,8 +380,7 @@ def show_sparse_examples(corpus, X_titles, features_titles, X_texts, features_te
 
 def test_cosine_on_pairs(titles, texts, X_titles, X_texts):
     """
-    Test de similarité cosinus sur quelques paires (titres puis résumés),
-    comme demandé dans le sujet.
+    Test de similarité cosinus sur quelques paires (titres puis résumés)
     """
     print_subsection("Tests cosine_similarity sur quelques paires (titres / résumés)")
     pairs = [(0, 3), (1, 7), (2, 5)]
@@ -802,7 +827,7 @@ def run_lda_topic_modeling(corpus):
 
     if not os.path.exists(STOPWORDS_PATH):
         print_err("Stopwords introuvables")
-        raise FileNotFoundError("⚠ Le fichier Stop-words-en.txt est introuvable !")
+        raise FileNotFoundError(" Le fichier Stop-words-en.txt est introuvable !")
 
     docs = [doc["title"] + " " + doc["text"] for doc in corpus.values()]
     ndocs = len(docs)
@@ -1290,6 +1315,407 @@ def generate_submission_graph(corpus, queries, enhanced_embeddings, sample_path,
 
     print_ok(f"Fichier exporté : {output_file}")
     print_info("Score = similarité cosinus sur embeddings graph-enhanced")
+    
+    
+
+# ============================================================
+#  SECTION 9 — EXPÉRIMENTATIONS (VARIANTES SPARSE + DENSE)
+#  + Ajout variantes STEMMING côté SPARSE
+#
+#  IMPORTANT (dataset) :
+#  - Query text = queries[qid]["text"]
+#  - Corpus doc text = title + text
+#  - Évaluation : uniquement parmi les ~25 candidats (valid.tsv)
+#  - Dense : embeddings cachés en local (MiniLM réutilise EMBEDDINGS_FILE)
+# ============================================================
+
+
+def _build_doc_index_fast(corpus: dict) -> dict:
+    """Index doc_id -> position (évite les all_doc_ids.index(...) O(N))."""
+    return {doc_id: i for i, doc_id in enumerate(corpus.keys())}
+
+
+def _evaluate_from_scorefn(qrels_valid: dict, score_fn, k: int = 5):
+    """
+    Calcule Macro P@k / R@k / F1@k + Macro AUC.
+    score_fn(qid, candidate_ids) -> (scores, labels) alignés.
+    """
+    p_list, r_list, f_list = [], [], []
+    auc_list = []
+    n_q = 0
+    n_auc = 0
+
+    for qid, cand_map in qrels_valid.items():
+        candidate_ids = list(cand_map.keys())
+        scores, labels = score_fn(qid, candidate_ids)
+
+        if scores is None or labels is None or len(labels) == 0:
+            continue
+
+        scores = np.asarray(scores, dtype=float)
+        labels = np.asarray(labels, dtype=int)
+
+        order = np.argsort(scores)[::-1]
+        topk = order[: min(k, len(order))]
+
+        tp = int(np.sum(labels[topk] == 1))
+        retrieved = len(topk)
+        positives_total = int(np.sum(labels))
+
+        prec = tp / retrieved if retrieved else 0.0
+        rec = tp / positives_total if positives_total else 0.0
+        f1v = (2 * prec * rec / (prec + rec)) if (prec + rec) else 0.0
+
+        p_list.append(prec)
+        r_list.append(rec)
+        f_list.append(f1v)
+
+        if len(set(labels.tolist())) > 1:
+            try:
+                auc_list.append(roc_auc_score(labels, scores))
+                n_auc += 1
+            except Exception:
+                pass
+
+        n_q += 1
+
+    macro_p = float(np.mean(p_list)) if p_list else 0.0
+    macro_r = float(np.mean(r_list)) if r_list else 0.0
+    macro_f = float(np.mean(f_list)) if f_list else 0.0
+    macro_auc = float(np.mean(auc_list)) if auc_list else None
+
+    return macro_p, macro_r, macro_f, macro_auc, n_q, n_auc
+
+
+# ============================================================
+#  STEMMING UTILITIES
+# ============================================================
+
+_stemmer = SnowballStemmer("english")
+
+
+def _simple_word_tokenize(text: str) -> list[str]:
+    """Tokenizer simple et robuste."""
+    return re.findall(r"\b\w+\b", (text or "").lower())
+
+
+def _stem_tokenizer(text: str) -> list[str]:
+    """Tokenize puis stemming Snowball."""
+    toks = _simple_word_tokenize(text)
+    return [_stemmer.stem(t) for t in toks]
+
+
+# ----------------------------
+# SPARSE variants (TF-IDF)
+# ----------------------------
+def _make_sparse_variant_scorefn(corpus, queries, qrels_valid, tfidf_vectorizer: TfidfVectorizer):
+    doc_index = _build_doc_index_fast(corpus)
+    docs_corpus = [(d.get("title", "") + " " + d.get("text", "")).strip() for d in corpus.values()]
+    X_corpus = tfidf_vectorizer.fit_transform(docs_corpus)
+
+    def score_fn(qid: str, candidate_ids: list[str]):
+        if qid not in queries:
+            return None, None
+
+        q_text = (queries[qid].get("text", "") or "").strip()
+        if not q_text:
+            return None, None
+
+        cand_ids = [d for d in candidate_ids if d in doc_index]
+        if not cand_ids:
+            return None, None
+
+        cand_idx = [doc_index[d] for d in cand_ids]
+        X_cand = X_corpus[cand_idx]
+
+        q_vec = tfidf_vectorizer.transform([q_text])
+        scores = cosine_similarity(q_vec, X_cand)[0]
+        labels = [int(qrels_valid[qid].get(d, 0)) for d in cand_ids]
+        return scores, labels
+
+    return score_fn
+
+
+def run_experiments_sparse_variants(corpus, queries, qrels_valid) -> pd.DataFrame:
+    print_subsection("EXPÉRIMENTATIONS — Variantes SPARSE (TF-IDF + Stemming)")
+
+    variants = [
+        ("tfidf_baseline", TfidfVectorizer()),
+        ("tfidf_stopwords", TfidfVectorizer(stop_words="english")),
+        ("tfidf_min2_max90", TfidfVectorizer(min_df=2, max_df=0.90)),
+        ("tfidf_bigrams", TfidfVectorizer(ngram_range=(1, 2))),
+        ("tfidf_stop_bigrams", TfidfVectorizer(stop_words="english", ngram_range=(1, 2))),
+        ("tfidf_sublinear_tf", TfidfVectorizer(sublinear_tf=True)),
+        ("tfidf_stem", TfidfVectorizer(tokenizer=_stem_tokenizer, token_pattern=None, lowercase=False)),
+        ("tfidf_stop_stem",
+         TfidfVectorizer(tokenizer=_stem_tokenizer, token_pattern=None, lowercase=False, stop_words="english")),
+    ]
+
+    rows = []
+    for name, vec in variants:
+        print_info(f"[SPARSE] Variant: {name}")
+        score_fn = _make_sparse_variant_scorefn(corpus, queries, qrels_valid, vec)
+        mp, mr, mf, mauc, n_q, n_auc = _evaluate_from_scorefn(qrels_valid, score_fn, k=5)
+
+        rows.append({
+            "family": "sparse",
+            "variant": name,
+            "macro_P@5": mp,
+            "macro_R@5": mr,
+            "macro_F1@5": mf,
+            "macro_AUC": (mauc if mauc is not None else np.nan),
+            "n_queries": n_q,
+            "n_queries_auc": n_auc
+        })
+
+    df = pd.DataFrame(rows).sort_values("macro_AUC", ascending=False)
+    return df
+
+        
+# ----------------------------
+# DENSE variants (cache embeddings par modèle)
+# ----------------------------
+def _emb_cache_path(base_path: str, model_name: str) -> str:
+    safe = model_name.replace("/", "_")
+    return os.path.join(base_path, f"corpus_embeddings__{safe}.pkl")
+
+
+def _build_or_load_embeddings_for_model(corpus: dict, model_name: str, base_path: str) -> np.ndarray:
+    cache_path = _emb_cache_path(base_path, model_name)
+
+    if model_name == "all-MiniLM-L6-v2" and os.path.exists(EMBEDDINGS_FILE):
+        print_info(f"[DENSE] Réutilisation cache existant: {EMBEDDINGS_FILE}")
+        with open(EMBEDDINGS_FILE, "rb") as f:
+            emb = pickle.load(f)
+        print_ok(f"[DENSE] Embeddings chargés (MiniLM): shape={emb.shape}")
+        return emb
+
+    if os.path.exists(cache_path):
+        print_info(f"[DENSE] Chargement embeddings cache: {cache_path}")
+        with open(cache_path, "rb") as f:
+            emb = pickle.load(f)
+        print_ok(f"[DENSE] Embeddings chargés: shape={emb.shape}")
+        return emb
+
+    print_info(f"[DENSE] Encodage corpus avec: {model_name} (1 seule fois puis cache)")
+    model = SentenceTransformer(model_name)
+    docs = [(d.get("title", "") + " " + d.get("text", "")).strip() for d in corpus.values()]
+    emb = model.encode(docs, show_progress_bar=True, convert_to_numpy=True)
+
+    with open(cache_path, "wb") as f:
+        pickle.dump(emb, f)
+    print_ok(f"[DENSE] Cache écrit: {cache_path} | shape={emb.shape}")
+    return emb
+
+
+def _make_dense_variant_scorefn(corpus, queries, qrels_valid, model_name: str, corpus_embeddings: np.ndarray):
+    doc_index = _build_doc_index_fast(corpus)
+    model = SentenceTransformer(model_name)
+
+    def score_fn(qid: str, candidate_ids: list[str]):
+        if qid not in queries:
+            return None, None
+
+        q_text = (queries[qid].get("text", "") or "").strip()
+        if not q_text:
+            return None, None
+
+        cand_ids = [d for d in candidate_ids if d in doc_index]
+        if not cand_ids:
+            return None, None
+
+        cand_idx = [doc_index[d] for d in cand_ids]
+        cand_emb = corpus_embeddings[cand_idx]
+
+        q_vec = model.encode([q_text], convert_to_numpy=True)
+        scores = cosine_similarity(q_vec, cand_emb)[0]
+        labels = [int(qrels_valid[qid].get(d, 0)) for d in cand_ids]
+        return scores, labels
+
+    return score_fn
+
+
+def run_experiments_dense_variants(corpus, queries, qrels_valid, base_path: str) -> pd.DataFrame:
+    print_subsection("EXPÉRIMENTATIONS — Variantes DENSE (Sentence-Transformers + cache local)")
+
+    model_names = [
+        "all-MiniLM-L6-v2",
+        "all-mpnet-base-v2",
+    ]
+
+    rows = []
+    for mn in model_names:
+        print_info(f"[DENSE] Variant: {mn}")
+        emb = _build_or_load_embeddings_for_model(corpus, mn, base_path=base_path)
+        score_fn = _make_dense_variant_scorefn(corpus, queries, qrels_valid, mn, emb)
+
+        mp, mr, mf, mauc, n_q, n_auc = _evaluate_from_scorefn(qrels_valid, score_fn, k=5)
+
+        rows.append({
+            "family": "dense",
+            "variant": mn,
+            "macro_P@5": mp,
+            "macro_R@5": mr,
+            "macro_F1@5": mf,
+            "macro_AUC": (mauc if mauc is not None else np.nan),
+            "n_queries": n_q,
+            "n_queries_auc": n_auc
+        })
+
+    df = pd.DataFrame(rows).sort_values("macro_AUC", ascending=False)
+    return df
+
+
+def run_full_experimental_section(corpus, queries, qrels_valid, base_path: str) -> pd.DataFrame:
+
+
+    df_sparse = run_experiments_sparse_variants(corpus, queries, qrels_valid)
+    print("\n--- RÉCAP SPARSE (trié par AUC) ---")
+    print(df_sparse.to_string(index=False))
+
+    df_dense = run_experiments_dense_variants(corpus, queries, qrels_valid, base_path=base_path)
+    print("\n--- RÉCAP DENSE (trié par AUC) ---")
+    print(df_dense.to_string(index=False))
+
+    df_all = pd.concat([df_sparse, df_dense], ignore_index=True)
+    df_all = df_all.sort_values(["family", "macro_AUC"], ascending=[True, False])
+
+    out_csv = os.path.join(base_path, "variant_results.csv")
+    df_all.to_csv(out_csv, index=False)
+    print_ok(f"Export résultats variantes : {out_csv}")
+
+    print("\n--- Meilleur par famille (macro_AUC) ---")
+    print(df_all.groupby("family", as_index=False).head(1).to_string(index=False))
+
+    return df_all
+
+
+
+# ============================================================
+#  FAISS — Index dense pour recherche rapide sur tout le corpus
+# ============================================================
+
+def build_faiss_index(corpus_embeddings: np.ndarray) -> faiss.Index:
+    """
+    Construit un index FAISS exact (IndexFlatIP) pour similarité cosinus.
+    """
+    print_subsection("Construction index FAISS (IndexFlatIP)")
+
+    emb = corpus_embeddings.astype("float32")
+
+    # Normalisation L2 pour que le produit scalaire = cosinus
+    faiss.normalize_L2(emb)
+
+    dim = emb.shape[1]
+    index = faiss.IndexFlatIP(dim)
+    index.add(emb)
+
+    print_ok(f"Index FAISS construit : {index.ntotal} vecteurs, dim={dim}")
+    return index
+
+def search_faiss(query_text: str, model, index: faiss.Index, corpus: dict, top_k: int = 10):
+    """
+    Recherche top_k documents dans tout le corpus via FAISS.
+    """
+    q_vec = model.encode([query_text], convert_to_numpy=True).astype("float32")
+    faiss.normalize_L2(q_vec)
+
+    scores, indices = index.search(q_vec, top_k)
+
+    doc_ids = list(corpus.keys())
+    results = []
+    for rank, idx in enumerate(indices[0]):
+        results.append({
+            "rank": rank + 1,
+            "doc_id": doc_ids[idx],
+            "score": float(scores[0][rank]),
+            "title": corpus[doc_ids[idx]]["title"]
+        })
+    return results
+
+def demo_faiss_search(corpus, model, corpus_embeddings):
+    """
+    Démo simple de recherche FAISS sur tout le corpus.
+    """
+    print_subsection("Démo FAISS — recherche dense sur tout le corpus")
+
+    index = build_faiss_index(corpus_embeddings)
+
+    query = "machine learning medical diagnosis"
+    print_info(f"Query FAISS : {query}")
+
+    results = search_faiss(query, model, index, corpus, top_k=10)
+    for r in results:
+        print(f"{r['rank']:>2}. [{r['score']:.4f}] {r['title']}")
+
+# ============================================================
+#  SECTION 10 — Submission Graph+ avec all-mpnet-base-v2
+#  Objectif : générer "submission_graph_all-mpnet-base-v2.csv" 
+# ============================================================
+
+def generate_submission_graph_with_model(
+    corpus, queries, G, qrels_valid,
+    model_name: str,
+    base_path: str,
+    sample_path: str,
+    output_file: str,
+    alpha: float = 0.70,
+    beta: float = 0.30,
+):
+    """
+    Pipeline complet Graph+ pour un modèle sentence-transformers donné :
+    1) load/compute + cache embeddings corpus (title+text) pour model_name
+    2) graph-enhanced embeddings sur le corpus
+    3) encode_query_graph(qid) (query = title-only, + voisins via metadata refs/cited_by)
+    4) génération du CSV submission (ordre conservé via groupby(sort=False))
+
+    Sortie : output_file (csv)
+    """
+    
+    # 1) Embeddings corpus (cache par modèle)
+    print_subsection("1) Embeddings corpus (cache par modèle)")
+    corpus_embeddings = _build_or_load_embeddings_for_model(corpus, model_name, base_path=base_path)
+
+    # 2) Graph-enhanced embeddings (moyenne voisins)
+    print_subsection("2) Graph-enhanced embeddings")
+    enhanced_embeddings, node_to_idx = build_graph_enhanced_embeddings(
+        corpus, corpus_embeddings, G, alpha=alpha, beta=beta
+    )
+
+    # 3) Encodeur query_graph spécifique (query = queries[qid]["text"])
+    print_subsection("3) Encodage query_graph (title-only + voisins)")
+    model = SentenceTransformer(model_name)
+
+    def encode_query_graph_mpnet(qid: str) -> np.ndarray:
+        q_text = (queries[qid].get("text", "") or "").strip()
+        q = model.encode(q_text, convert_to_numpy=True)
+
+        refs = queries[qid].get("metadata", {}).get("references", [])
+        cites = queries[qid].get("metadata", {}).get("cited_by", [])
+        neigh = refs + cites
+
+        neigh_vecs = []
+        for n in neigh:
+            if n in node_to_idx:
+                neigh_vecs.append(enhanced_embeddings[node_to_idx[n]])
+
+        if len(neigh_vecs) == 0:
+            return q
+        return alpha * q + beta * np.mean(neigh_vecs, axis=0)
+
+    # 4) Génération CSV submission Graph+
+    print_subsection("4) Génération submission CSV (ordre préservé)")
+    generate_submission_graph(
+        corpus=corpus,
+        queries=queries,
+        enhanced_embeddings=enhanced_embeddings,
+        sample_path=sample_path,
+        output_file=output_file,
+        encode_query_graph=encode_query_graph_mpnet
+    )
+
+    print_ok(f"Submission Graph+ ({model_name}) générée : {output_file}")
+
 
 
 # ============================================================
@@ -1359,9 +1785,11 @@ def main():
     # Section 4: Dense embeddings
     # --------------------
     print_section("SECTION 4 — REPRÉSENTATIONS DENSES (EMBEDDINGS)")
-
     model, corpus_embeddings = build_or_load_embeddings(corpus, EMBEDDINGS_FILE)
     demo_dense_search(corpus, model, corpus_embeddings)
+    
+    # --- AJOUT FAISS ---
+    demo_faiss_search(corpus, model, corpus_embeddings)
 
     # --------------------
     # Section 5: Dense evaluation
@@ -1378,9 +1806,9 @@ def main():
     generate_submission_dense(corpus, queries, model, corpus_embeddings, SAMPLE_PATH, OUTPUT_SPARSE_SUB)
 
     # --------------------
-    # Section 6: LDA (optionnel)
+    # Section 6: LDA 
     # --------------------
-    print_section("SECTION 6 — LDA (OPTIONNEL)")
+    print_section("SECTION 6 — LDA ")
 
 
     run_lda_topic_modeling(corpus)
@@ -1413,17 +1841,45 @@ def main():
         model, corpus_embeddings, enhanced_embeddings, node_to_idx, encode_query_graph,
         vectorizer_merged, X_merged, all_doc_ids
     )
-
-
-    print_section("SECTION 9 — GÉNÉRATION SOUMISSION GRAPH+")
+    
+    print_section("SECTION 8 — GÉNÉRATION SOUMISSION GRAPH+")
     generate_submission_graph(
         corpus, queries, enhanced_embeddings, SAMPLE_PATH, OUTPUT_GRAPH_SUB, encode_query_graph
     )
+    
+
+# --------------------
+# Section 9: EXPÉRIMENTATIONS (VARIANTES SPARSE + DENSE)
+# --------------------
+
+    print_section("SECTION 9: EXPÉRIMENTATIONS (VARIANTES SPARSE + DENSE)")
+    run_full_experimental_section(corpus, queries, qrels_valid, BASE_PATH)
+
+  
+# --------------------
+# SECTION 10 — Submission Graph+ avec all-mpnet-base-v2
+# --------------------  
+
+    print_section("SECTION 10: Submission Graph+ avec all-mpnet-base-v2")
+    
+    # --- Génère submission_graph_all-mpnet-base-v2.csv ---
+    output_mpnet = os.path.join(BASE_PATH, "submission_graph_all-mpnet-base-v2.csv")
+    generate_submission_graph_with_model(
+        corpus=corpus,
+        queries=queries,
+        G=G,
+        qrels_valid=qrels_valid,     # (pas utilisé pour la submission, mais gardé si tu veux logger plus tard)
+        model_name="all-mpnet-base-v2",
+        base_path=BASE_PATH,
+        sample_path=SAMPLE_PATH,
+        output_file=output_mpnet,
+        alpha=0.70,
+        beta=0.30
+    )
+
 
     print_section("FIN DU SCRIPT")
     print_ok("Exécution terminée.")
-
-
+        
 if __name__ == "__main__":
     main()
-
