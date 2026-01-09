@@ -2,47 +2,52 @@
 
 **MOD 7.2 – Introduction à la science des données**
 BE séances 4, 5, 6 – Décembre 2025 / Janvier 2026
-
-Enseignants : Julien Velcin (CM, BE), Erwan Versmée (BE)
+**Enseignants** : Julien Velcin (CM, BE), Erwan Versmée (BE)
+**Groupe** : THEO FOREVER
+**Auteurs** : Julien Durand, Laurène Cristol, Théo Florence
 
 ---
 
-## Description
+## Description du projet
 
-Ce projet consiste à construire un **moteur de recherche d’articles scientifiques** : étant donnée une publication (requête), le système doit **retrouver les articles sémantiquement les plus proches**.
+Ce projet implémente un **moteur de recherche d’articles scientifiques** capable de retrouver, pour une publication donnée (requête), les **5 articles sémantiquement les plus proches** parmi un ensemble de 30 candidats (5 pertinents + ~25 non pertinents).
+L’objectif est de produire un **score d’appariement S(q, c)** pour classer les candidats et maximiser la pertinence des résultats.
 
-Pour chaque requête, on dispose d’environ **30 candidats** :
-- **5 articles pertinents** (citations de l’article requête : exemples positifs)
-- **~25 articles non pertinents** (exemples négatifs)
+### Approches mises en œuvre :
+1. **Représentations creuses (sparse)** :
+   - `CountVectorizer` et `TF-IDF` sur les titres et résumés.
+   - Similarité cosinus pour le ranking.
+2. **Représentations denses (dense)** :
+   - Embeddings via [Sentence-Transformers](https://www.sbert.net/) (modèles `all-MiniLM-L6-v2` et `all-mpnet-base-v2`).
+   - Similarité cosinus dans l’espace dense.
+3. **Approche structurelle (graph)** :
+   - Construction du **graphe de citations** avec [NetworkX](https://networkx.org/).
+   - Enrichissement des embeddings par la moyenne pondérée des voisins (prédécesseurs + successeurs).
+   - Combinaison des approches dense et graphique pour améliorer les performances.
 
-L’objectif est de produire un score d’appariement **S(q, c)** permettant de classer les candidats, et de **remonter les 5 pertinents**.
-
-Approches mises en œuvre :
-1. **Représentations creuses (sparse)** : CountVectorizer + TF-IDF, similarité cosinus.
-2. **Représentations denses (dense)** : embeddings Sentence-Transformers (SBERT) + cosinus.
-3. **Approche structurelle (graph)** : construction du graphe de citations (NetworkX) et **embeddings enrichis par les voisins** (moyenne pondérée).
-
-Évaluation sur `valid.tsv` avec :
-- **AUC** (métrique Kaggle / leaderboard)
-- **P@5 / R@5 / F1@5**
-- Courbes ROC globales (comparaison sparse vs dense vs graph)
-
-Le script génère aussi les fichiers de **soumission Kaggle**.
+### Évaluation :
+- **Métriques** : AUC (leaderboard Kaggle), Précision@5, Rappel@5, F1@5.
+- **Visualisations** : Courbes ROC, distributions de degrés, centralités (PageRank, Betweenness, etc.).
+- **Soumissions** : Génération de fichiers CSV pour [Kaggle](https://www.kaggle.com/) (`sample_submission_dense.csv`, `sample_submission_graph.csv`, `submission_graph_all-mpnet-base-v2.csv`).
 
 ---
 
 ## Contenu du dépôt
 
-| Fichier/Dossier | Description |
-|-----------------|-------------|
-| `BE2_data_science_ECL_2025.py` | Script principal : chargement, représentations, moteurs, évaluations, graph, et soumissions. |
-| `requirements.txt` | Dépendances Python pour exécuter le projet. |
-| `README.md` | Ce fichier. |
-| `sample_submission.csv` | Modèle de soumission Kaggle (fourni par l’enseignant / la compétition). |
-| `sample_submission_dense.csv` | Soumission générée (dense). |
-| `sample_submission_graph.csv` | Soumission générée (graph-enhanced). |
+| Fichier/Dossier                     | Description                                                                                     |
+|-------------------------------------|-------------------------------------------------------------------------------------------------|
+| `BE2_data_science_ECL_2025.py`      | Script principal : chargement des données, représentations, moteurs, évaluations, et soumissions. |
+| `requirements.txt`                  | Liste des dépendances Python (voir [Installation](#installation)).                              |
+| `README.md`                         | Ce fichier.                                                                                     |
+| `sample_submission.csv`             | Modèle de soumission Kaggle (fournis par l’enseignant).                                         |
+| `sample_submission_dense.csv`       | Soumission générée par l’approche dense (SBERT).                                                |
+| `sample_submission_graph.csv`       | Soumission générée par l’approche graph-enhanced.                                               |
+| `submission_graph_all-mpnet-base-v2.csv` | Soumission optimisée avec le modèle `all-mpnet-base-v2` + graphe.                          |
+| `Stop-words-en.txt`                 | Liste de stopwords pour le prétraitement LDA (Section 6).                                      |
 
-⚠️ Les fichiers de données (`corpus.jsonl`, `queries.jsonl`, `valid.tsv`, `test_final.tsv`) ne sont pas inclus dans le dépôt.
+⚠️ **Fichiers non inclus** (à placer dans le dossier racine) :
+- Données d’entrée : `corpus.jsonl`, `queries.jsonl`, `valid.tsv`, `test_final.tsv`.
+- Cache : `corpus_embeddings.pkl` (généré automatiquement).
 
 ---
 
@@ -55,81 +60,114 @@ cd BE2_Data_science_ECL
 ```
 
 ### 2. Créer un environnement Python
-
 ```bash
 python -m venv venv
-source venv/bin/activate  # Linux / macOS
-venv\Scripts\activate     # Windows
+source venv/bin/activate   # Linux/macOS
+venv\Scripts\activate      # Windows
 ```
 
 ### 3. Installer les dépendances
-
 ```bash
 pip install -r requirements.txt
 ```
+> ⚠️ **Note** :
+> - L’installation de `faiss-cpu` (pour l’indexation vectorielle) peut nécessiter des dépendances système (ex: `g++` sur Linux).
+> - Pour `pyLDAvis`, voir [la documentation officielle](https://pyldavis.readthedocs.io/en/latest/readme.html#installation) si des erreurs surviennent.
 
 ---
 
 ## Utilisation
 
-### 1. Placer les fichiers de données dans un dossier local (ex : `data/`)
+### 1. Préparer les données
+Placez les fichiers suivants dans le dossier racine du projet :
+- `corpus.jsonl`
+- `queries.jsonl`
+- `valid.tsv`
+- `sample_submission.csv` (pour générer les soumissions)
+- *(Optionnel)* `test_final.tsv` (pour évaluer sur le jeu de test final).
 
-* `corpus.jsonl`
-* `queries.jsonl`
-* `valid.tsv`
-* `sample_submission.csv`
-* (optionnel) `test_final.tsv`
-
-### 2. Modifier les chemins au début du script si besoin
-
+### 2. Configurer les chemins
+Modifiez les variables en début de script si vos fichiers ne sont pas dans le dossier par défaut :
 ```python
-BASE_PATH = r"..."
+BASE_PATH = r"C:\Chemin\Vers\Vos\Données"  # À adapter selon votre système
 CORPUS_PATH = os.path.join(BASE_PATH, "corpus.jsonl")
-QUERIES_PATH = os.path.join(BASE_PATH, "queries.jsonl")
-QRELS_PATH = os.path.join(BASE_PATH, "valid.tsv")
-SAMPLE_PATH = os.path.join(BASE_PATH, "sample_submission.csv")
+# ... (autres chemins)
 ```
 
 ### 3. Lancer le script
-
 ```bash
 python BE2_data_science_ECL_2025.py
 ```
+> ⏳ **Temps d’exécution** :
+> - La **première exécution** peut prendre **plusieurs minutes** (voire heures selon votre machine), surtout pour :
+>   - Le calcul des embeddings SBERT (`corpus_embeddings.pkl`).
+>   - L’entraînement du modèle LDA (Section 6, optionnelle).
+> - Les exécutions suivantes seront plus rapides grâce au cache (`corpus_embeddings.pkl`).
 
+### 4. Résultats attendus
 Le script :
-
-* charge les données,
-* construit les représentations sparse/dense,
-* évalue sur `valid.tsv`,
-* construit et analyse le graphe,
-* calcule une variante **dense+graph**,
-* exporte les fichiers `sample_submission_dense.csv` et `sample_submission_graph.csv`.
+1. Affiche des **statistiques** sur les données (Section 2).
+2. Évalue les approches **sparse**, **dense**, et **graph-enhanced** (Sections 3–8).
+3. Génère les fichiers de soumission Kaggle :
+   - `sample_submission_dense.csv`
+   - `sample_submission_graph.csv`
+   - `submission_graph_all-mpnet-base-v2.csv` (meilleure performance attendue).
 
 ---
 
 ## Structure du code
 
-| Section   | Contenu                                                                                          |
-|-----------|--------------------------------------------------------------------------------------------------|
-| Section 2 | Exploration des données + vectorisation sparse (titres / résumés / TF-IDF fusion).               |
-| Section 3 | Similarité cosinus + moteur sparse (requête libre + baseline).                                   |
-| Section 4 | Embeddings Sentence-Transformers + sauvegarde / rechargement.                                    |
-| Section 5 | Ranking des candidats + métriques (P@5/R@5/F1@5 + AUC) + soumission dense.                       |
-| Section 6 | Intermède exploratoire LDA + visualisations (optionnel).                                         |
-| Section 7 | Graphe de citations : stats, matrices A/A²/A³, centralités (PageRank, Katz, etc.).               |
-| Section 8 | Embeddings enrichis par le graphe + comparaison dense vs graph + ROC globale + soumission graph. |
+| Section | Contenu                                                                                          |
+|---------|--------------------------------------------------------------------------------------------------|
+| 2       | Exploration des données + vectorisation sparse (TF-IDF).                                         |
+| 3       | Moteur de recherche sparse + évaluation baseline.                                                |
+| 4       | Embeddings SBERT + sauvegarde/rechargement.                                                     |
+| 5       | Ranking des candidats + métriques (P@5/R@5/F1@5/AUC) + soumission dense.                         |
+| 6       | *(Optionnel)* Analyse thématique avec LDA/UMAP/pyLDAvis.                                         |
+| 7       | Construction du graphe de citations + calcul de centralités.                                    |
+| 8       | Embeddings enrichis par le graphe + comparaison dense vs graph + ROC globale.                    |
+| 9       | Expérimentations (variantes TF-IDF, modèles SBERT).                                             |
+| 10      | Génération de la soumission optimisée (`all-mpnet-base-v2` + graphe).                           |
 
 ---
 
 ## Notes techniques
 
-* Les embeddings SBERT sont calculés **une seule fois** puis sauvegardés (pickle) pour accélérer les exécutions suivantes.
-* La partie **LDA / UMAP / pyLDAvis** est exploratoire et peut être coûteuse (en temps + dépendances).
-  Elle peut être désactivée en commentant l’appel correspondant dans le script.
+### Optimisations :
+- **Cache des embeddings** : Les représentations SBERT sont sauvegardées dans `corpus_embeddings.pkl` pour éviter de les recalculer.
+- **FAISS** : Utilisé pour une recherche vectorielle rapide (démo en Section 4).
+- **Parallelisation** : Les calculs de similarité cosinus sont vectorisés avec `numpy`/`scipy`.
+
+### Désactiver des sections :
+- Pour **ignorer la partie LDA** (longue et optionnelle), commentez l’appel à `run_lda_topic_modeling(corpus)` dans le `main()`.
+- Pour **éviter de recalculer les embeddings**, assurez-vous que `corpus_embeddings.pkl` existe déjà.
 
 ---
 
-## Auteurs
+## FAQ
 
-* Groupe : THEO FOREVER
-* Membres : Julien Durand, Laurène Cristol, Théo Florence
+### ❓ Pourquoi le script est-il lent ?
+- Le calcul des embeddings SBERT (`all-MiniLM-L6-v2` ou `all-mpnet-base-v2`) sur 25k+ articles est **coûteux en CPU/GPU**.
+- Solution : Utilisez un sous-ensemble du corpus pour les tests, ou exécutez le script sur une machine avec GPU (ex: Google Colab).
+
+### ❓ Comment adapter le script pour `test_final.tsv` ?
+1. Remplacez `QRELS_PATH` par le chemin vers `test_final.tsv`.
+2. Modifiez les noms de sortie des soumissions (ex: `submission_test_dense.csv`).
+
+### ❓ Erreur "Missing library faiss" ?
+Installez FAISS via :
+```bash
+pip install faiss-cpu  # ou faiss-gpu si vous avez un GPU NVIDIA
+```
+
+### ❓ Comment visualiser les résultats LDA ?
+Ouvrez le fichier `pyldavis_lda.html` généré dans votre navigateur (Section 6).
+
+---
+
+## Auteurs et licence
+- **Auteurs** : [Julien Durand](https://github.com/udurand), Laurène Cristol, Théo Florence.
+- **Licence** : Ce projet est ouvert à des fins pédagogiques. Merci de citer les auteurs en cas de réutilisation.
+
+---
+**Besoin d’aide ?** Ouvrez une [issue](https://github.com/udurand/BE2_Data_science_ECL/issues) sur le dépôt GitHub !
